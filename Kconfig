@@ -1,0 +1,13 @@
+menu "Bihar Firebase module"
+            
+    menu "FIREBASE"
+        config FIREBASE_TOKEN_REFRESH_TIME_MS
+            int "Firebase token refresh time"
+            default 3000000
+            range 1 3000000
+            help
+                Firebase token refresh time in ms
+
+    endmenu
+  
+endmenu

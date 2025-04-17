@@ -1,6 +1,6 @@
 /**
  * @file bi_firebase.c
- * @brief Implementación de la librería para Firebase Realtime Database en ESP32
+ * @brief Implementaciï¿½n de la librerï¿½a para Firebase Realtime Database en ESP32
  */
 
 #include "bi_firebase.h"
@@ -46,7 +46,7 @@ typedef struct {
     bool listener_running;
 } firebase_handle_private_t;
 
-// Funciones estáticas de ayuda
+// Funciones estï¿½ticas de ayuda
 
 /**
  * Codifica un string a formato URL
@@ -57,7 +57,7 @@ static char *url_encode(const char *str) {
 
     const char hex[] = "0123456789ABCDEF";
     size_t len       = strlen(str);
-    char *encoded    = malloc(len * 3 + 1); // En el peor caso, cada carácter se codifica como %XX
+    char *encoded    = malloc(len * 3 + 1); // En el peor caso, cada carï¿½cter se codifica como %XX
 
     if (!encoded)
         return NULL;
@@ -82,7 +82,7 @@ static char *url_encode(const char *str) {
 }
 
 /**
- * Función para manejar eventos HTTP
+ * Funciï¿½n para manejar eventos HTTP
  */
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     firebase_handle_private_t *handle = (firebase_handle_private_t *)evt->user_data;
@@ -129,7 +129,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 }
 
 /**
- * Función para limpiar el buffer de respuesta
+ * Funciï¿½n para limpiar el buffer de respuesta
  */
 static void clear_response_buffer(firebase_handle_t *handle) {
     if (handle->response_buffer) {
@@ -140,7 +140,7 @@ static void clear_response_buffer(firebase_handle_t *handle) {
 }
 
 /**
- * Función de callback para el temporizador de renovación de token
+ * Funciï¿½n de callback para el temporizador de renovaciï¿½n de token
  */
 static void token_refresh_timer_callback(void *arg) {
     firebase_handle_t *handle = (firebase_handle_t *)arg;
@@ -163,9 +163,9 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
     cJSON *id_token      = cJSON_GetObjectItem(json, "idToken");
     cJSON *refresh_token = cJSON_GetObjectItem(json, "refreshToken");
     cJSON *expires_in    = cJSON_GetObjectItem(json, "expiresIn");
-
-    if (id_token && refresh_token && expires_in && cJSON_IsString(id_token) && cJSON_IsString(refresh_token) &&
-        cJSON_IsNumber(expires_in)) {
+  
+    int expires_in_int = atoi(expires_in->valuestring);
+    if (id_token && refresh_token && expires_in && cJSON_IsString(id_token) && cJSON_IsString(refresh_token) && expires_in_int > 0) {
 
         // Liberar los tokens anteriores si existen
         if (handle->auth.id_token)
@@ -177,11 +177,11 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
         handle->auth.id_token      = strdup(id_token->valuestring);
         handle->auth.refresh_token = strdup(refresh_token->valuestring);
 
-        // Calcular tiempo de expiración (actual + expires_in - margen de seguridad de 5 minutos)
+        // Calcular tiempo de expiraciï¿½n (actual + expires_in - margen de seguridad de 5 minutos)
         int64_t current_time      = esp_timer_get_time() / 1000; // Convertir a ms
-        handle->auth.token_expiry = current_time + (expires_in->valueint * 1000) - (5 * 60 * 1000);
+        handle->auth.token_expiry = current_time + (expires_in_int * 1000) - (5 * 60 * 1000);
 
-        ESP_LOGI(TAG, "Tokens de autenticación obtenidos con éxito, expiran en %d segundos", expires_in->valueint);
+        ESP_LOGI(TAG, "Tokens de autenticaciï¿½n obtenidos con ï¿½xito, expiran en %d segundos", expires_in_int);
         success = true;
     } else {
         // Intentar obtener mensaje de error
@@ -189,10 +189,10 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
         if (error) {
             cJSON *message = cJSON_GetObjectItem(error, "message");
             if (message && cJSON_IsString(message)) {
-                ESP_LOGE(TAG, "Error de autenticación: %s", message->valuestring);
+                ESP_LOGE(TAG, "Error de autenticaciï¿½n: %s", message->valuestring);
             }
         } else {
-            ESP_LOGE(TAG, "Formato de respuesta de autenticación inválido");
+            ESP_LOGE(TAG, "Formato de respuesta de autenticaciï¿½n invï¿½lido");
         }
     }
 
@@ -233,12 +233,12 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
         esp_http_client_set_header(client, "Content-Type", content_type);
     }
 
-    // Si estamos autenticados y no es una solicitud de autenticación, usar el token
-    if (handle->auth.id_token && strstr(url, "identitytoolkit") == NULL && strstr(url, "securetoken") == NULL) {
+    // Si estamos autenticados y no es una solicitud de autenticaciï¿½n, usar el token
+    /*if (handle->auth.id_token && strstr(url, "identitytoolkit") == NULL && strstr(url, "securetoken") == NULL) {
         char auth_header[256];
         snprintf(auth_header, sizeof(auth_header), "Bearer %s", handle->auth.id_token);
         esp_http_client_set_header(client, "Authorization", auth_header);
-    }
+    }*/
 
     // Establecer datos si es necesario
     if (data && data_len > 0) {
@@ -255,7 +255,7 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
         return false;
     }
 
-    // Verificar código de estado HTTP
+    // Verificar cï¿½digo de estado HTTP
     int status_code     = esp_http_client_get_status_code(client);
     handle->http_status = status_code;
 
@@ -277,10 +277,10 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
  * Construye una URL para Firebase
  */
 static char *build_firebase_url(firebase_handle_t *handle, const char *path, const firebase_request_t *request) {
-    // Calcular tamaño máximo de la URL
+    // Calcular tamaï¿½o mï¿½ximo de la URL
     size_t base_len    = strlen(handle->config.database_url);
     size_t path_len    = path ? strlen(path) : 0;
-    size_t max_url_len = base_len + path_len + 256; // Espacio extra para parámetros
+    size_t max_url_len = base_len + path_len + 256; // Espacio extra para parï¿½metros
 
     char *url = malloc(max_url_len);
     if (!url)
@@ -294,19 +294,20 @@ static char *build_firebase_url(firebase_handle_t *handle, const char *path, con
         snprintf(url, max_url_len, "%s/%s.json", handle->config.database_url, path ? path : "");
     }
 
-    // Añadir parámetros de consulta si existen
-    if (request) {
-        char *params_start = url + strlen(url);
-        int remaining_len  = max_url_len - strlen(url);
-        bool has_params    = false;
+    char *params_start = url + strlen(url);    
+    int remaining_len  = max_url_len - strlen(url);
+    bool has_params    = false;
 
-        // Añadir auth token como parámetro si existe
-        if (handle->auth.id_token) {
-            snprintf(params_start, remaining_len, "%sauth=%s", has_params ? "&" : "?", handle->auth.id_token);
-            has_params    = true;
-            params_start  = url + strlen(url);
-            remaining_len = max_url_len - strlen(url);
-        }
+    // Aï¿½adir auth token como parï¿½metro si existe
+    if (handle->auth.id_token) {
+        snprintf(params_start, remaining_len, "%sauth=%s", has_params ? "&" : "?", handle->auth.id_token);
+        has_params    = true;
+        params_start  = url + strlen(url);
+        remaining_len = max_url_len - strlen(url);
+    }
+
+    // Aï¿½adir parï¿½metros de consulta si existen
+    if (request) {
 
         // Shallow
         if (request->shallow) {
@@ -482,7 +483,7 @@ static void firebase_listener_task(void *pvParameters) {
             continue;
         }
 
-        // Verificar autenticación
+        // Verificar autenticaciï¿½n
         if (!firebase_is_authenticated(&handle->public_handle)) {
             ESP_LOGW(TAG, "No autenticado, intentando renovar token...");
             firebase_refresh_token(&handle->public_handle);
@@ -534,7 +535,7 @@ static void firebase_listener_task(void *pvParameters) {
         }
         xSemaphoreGive(handle->mutex);
 
-        // Esperar antes de la siguiente verificación
+        // Esperar antes de la siguiente verificaciï¿½n
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
@@ -543,11 +544,11 @@ static void firebase_listener_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-// Implementación de funciones públicas
+// Implementaciï¿½n de funciones pï¿½blicas
 
 firebase_handle_t *firebase_init(firebase_config_t *config) {
     if (!config || !config->database_url) {
-        ESP_LOGE(TAG, "Configuración inválida");
+        ESP_LOGE(TAG, "Configuraciï¿½n invï¿½lida");
         return NULL;
     }
 
@@ -557,7 +558,7 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
         return NULL;
     }
 
-    // Copiar configuración
+    // Copiar configuraciï¿½n
     handle->public_handle.config.database_url   = strdup(config->database_url);
     handle->public_handle.config.host           = config->host ? strdup(config->host) : NULL;
     handle->public_handle.config.event_callback = config->event_callback;
@@ -566,7 +567,7 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
     handle->public_handle.config.timeout_ms = config->timeout_ms > 0 ? config->timeout_ms : FIREBASE_HTTP_TIMEOUT_MS;
     handle->public_handle.config.secure_connection = config->secure_connection;
 
-    // Copiar información de autenticación
+    // Copiar informaciï¿½n de autenticaciï¿½n
     handle->public_handle.auth.auth_type     = config->auth.auth_type;
     handle->public_handle.auth.api_key       = config->auth.api_key ? strdup(config->auth.api_key) : NULL;
     handle->public_handle.auth.user_email    = config->auth.user_email ? strdup(config->auth.user_email) : NULL;
@@ -632,7 +633,7 @@ void firebase_deinit(firebase_handle_t *handle) {
         esp_timer_delete(handle->token_refresh_timer);
     }
 
-    // Liberar recursos de autenticación
+    // Liberar recursos de autenticaciï¿½n
     if (handle->auth.api_key)
         free(handle->auth.api_key);
     if (handle->auth.user_email)
@@ -646,7 +647,7 @@ void firebase_deinit(firebase_handle_t *handle) {
     if (handle->auth.refresh_token)
         free(handle->auth.refresh_token);
 
-    // Liberar configuración
+    // Liberar configuraciï¿½n
     if (handle->config.database_url)
         free(handle->config.database_url);
     if (handle->config.host)
@@ -678,16 +679,17 @@ void firebase_deinit(firebase_handle_t *handle) {
 
 bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, const char *password) {
     if (!handle || !email || !password || !handle->config.database_url || !handle->auth.api_key) {
-        ESP_LOGE(TAG, "Parámetros inválidos para autenticación");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para autenticaciï¿½n");
         return false;
     }
 
     handle->state = FIREBASE_STATE_AUTHENTICATING;
 
-    // Construir URL de autenticación
+    // Construir URL de autenticaciï¿½n
     char url[256];
     snprintf(url, sizeof(url), "%s:signInWithPassword?key=%s", FIREBASE_AUTH_URL, handle->auth.api_key);
 
+    
     // Construir payload JSON
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "email", email);
@@ -708,14 +710,14 @@ bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, c
     free(payload);
 
     if (!success || !handle->response_buffer) {
-        ESP_LOGE(TAG, "Error en solicitud de autenticación");
+        ESP_LOGE(TAG, "Error en solicitud de autenticaciï¿½n");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
 
     // Parsear respuesta
     if (!parse_auth_response(handle, handle->response_buffer)) {
-        ESP_LOGE(TAG, "Error al parsear respuesta de autenticación");
+        ESP_LOGE(TAG, "Error al parsear respuesta de autenticaciï¿½n");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
@@ -731,20 +733,20 @@ bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, c
     handle->auth.auth_type     = FIREBASE_AUTH_API_KEY;
 
     handle->state = FIREBASE_STATE_AUTHENTICATED;
-    ESP_LOGI(TAG, "Autenticación exitosa con email/password");
+    ESP_LOGI(TAG, "Autenticaciï¿½n exitosa con email/password");
 
     return true;
 }
 
 bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *custom_token) {
     if (!handle || !custom_token || !handle->config.database_url || !handle->auth.api_key) {
-        ESP_LOGE(TAG, "Parámetros inválidos para autenticación");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para autenticaciï¿½n");
         return false;
     }
 
     handle->state = FIREBASE_STATE_AUTHENTICATING;
 
-    // Construir URL de autenticación
+    // Construir URL de autenticaciï¿½n
     char url[256];
     snprintf(url, sizeof(url), "%s:signInWithCustomToken?key=%s", FIREBASE_AUTH_URL, handle->auth.api_key);
 
@@ -767,14 +769,14 @@ bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *cust
     free(payload);
 
     if (!success || !handle->response_buffer) {
-        ESP_LOGE(TAG, "Error en solicitud de autenticación");
+        ESP_LOGE(TAG, "Error en solicitud de autenticaciï¿½n");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
 
     // Parsear respuesta
     if (!parse_auth_response(handle, handle->response_buffer)) {
-        ESP_LOGE(TAG, "Error al parsear respuesta de autenticación");
+        ESP_LOGE(TAG, "Error al parsear respuesta de autenticaciï¿½n");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
@@ -786,7 +788,7 @@ bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *cust
     handle->auth.auth_type    = FIREBASE_AUTH_CUSTOM_TOKEN;
 
     handle->state = FIREBASE_STATE_AUTHENTICATED;
-    ESP_LOGI(TAG, "Autenticación exitosa con token personalizado");
+    ESP_LOGI(TAG, "Autenticaciï¿½n exitosa con token personalizado");
 
     return true;
 }
@@ -797,14 +799,14 @@ bool firebase_refresh_token(firebase_handle_t *handle) {
         return false;
     }
 
-    // Si aún no ha expirado, no refrescar
+    // Si aï¿½n no ha expirado, no refrescar
     int64_t current_time = esp_timer_get_time() / 1000; // Convertir a ms
     if (handle->auth.token_expiry > current_time) {
-        ESP_LOGI(TAG, "Token aún válido, no es necesario refrescarlo");
+        ESP_LOGI(TAG, "Token aï¿½n vï¿½lido, no es necesario refrescarlo");
         return true;
     }
 
-    ESP_LOGI(TAG, "Refrescando token de autenticación");
+    ESP_LOGI(TAG, "Refrescando token de autenticaciï¿½n");
 
     // Construir URL de refresco
     char url[256];
@@ -859,20 +861,20 @@ bool firebase_refresh_token(firebase_handle_t *handle) {
         handle->auth.id_token      = strdup(id_token->valuestring);
         handle->auth.refresh_token = strdup(refresh_token->valuestring);
 
-        // Calcular tiempo de expiración (actual + expires_in - margen de seguridad de 5 minutos)
+        // Calcular tiempo de expiraciï¿½n (actual + expires_in - margen de seguridad de 5 minutos)
         int64_t current_time      = esp_timer_get_time() / 1000; // Convertir a ms
         handle->auth.token_expiry = current_time + (expires_in->valueint * 1000) - (5 * 60 * 1000);
 
-        ESP_LOGI(TAG, "Token refrescado con éxito, expira en %d segundos", expires_in->valueint);
+        ESP_LOGI(TAG, "Token refrescado con ï¿½xito, expira en %d segundos", expires_in->valueint);
         refresh_success = true;
     } else {
         // Intentar reautenticarse si el refresco falla
         if (handle->auth.auth_type == FIREBASE_AUTH_API_KEY && handle->auth.user_email && handle->auth.user_password) {
 
-            ESP_LOGW(TAG, "Refresco de token falló, intentando reautenticarse");
+            ESP_LOGW(TAG, "Refresco de token fallï¿½, intentando reautenticarse");
             refresh_success = firebase_auth_with_password(handle, handle->auth.user_email, handle->auth.user_password);
         } else if (handle->auth.auth_type == FIREBASE_AUTH_CUSTOM_TOKEN && handle->auth.custom_token) {
-            ESP_LOGW(TAG, "Refresco de token falló, intentando reautenticarse");
+            ESP_LOGW(TAG, "Refresco de token fallï¿½, intentando reautenticarse");
             refresh_success = firebase_auth_with_custom_token(handle, handle->auth.custom_token);
         }
     }
@@ -909,13 +911,13 @@ bool firebase_maintain_auth(firebase_handle_t *handle) {
 
 bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        ESP_LOGE(TAG, "Parámetros inválidos para GET");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para GET");
         return false;
     }
 
-    // Verificar autenticación
+    // Verificar autenticaciï¿½n
     if (!firebase_maintain_auth(handle)) {
-        ESP_LOGE(TAG, "Error de autenticación");
+        ESP_LOGE(TAG, "Error de autenticaciï¿½n");
         return false;
     }
 
@@ -958,13 +960,13 @@ bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_val
 
 bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        ESP_LOGE(TAG, "Parámetros inválidos para SET");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para SET");
         return false;
     }
 
-    // Verificar autenticación
+    // Verificar autenticaciï¿½n
     if (!firebase_maintain_auth(handle)) {
-        ESP_LOGE(TAG, "Error de autenticación");
+        ESP_LOGE(TAG, "Error de autenticaciï¿½n");
         return false;
     }
 
@@ -1010,13 +1012,13 @@ bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_da
 
 bool firebase_update(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value || value->type != FIREBASE_DATA_TYPE_JSON) {
-        ESP_LOGE(TAG, "Parámetros inválidos para UPDATE (debe ser JSON)");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para UPDATE (debe ser JSON)");
         return false;
     }
 
-    // Verificar autenticación
+    // Verificar autenticaciï¿½n
     if (!firebase_maintain_auth(handle)) {
-        ESP_LOGE(TAG, "Error de autenticación");
+        ESP_LOGE(TAG, "Error de autenticaciï¿½n");
         return false;
     }
 
@@ -1046,13 +1048,13 @@ bool firebase_update(firebase_handle_t *handle, const char *path, const firebase
 bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value, char *generated_key,
                    size_t key_size) {
     if (!handle || !path || !value) {
-        ESP_LOGE(TAG, "Parámetros inválidos para PUSH");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para PUSH");
         return false;
     }
 
-    // Verificar autenticación
+    // Verificar autenticaciï¿½n
     if (!firebase_maintain_auth(handle)) {
-        ESP_LOGE(TAG, "Error de autenticación");
+        ESP_LOGE(TAG, "Error de autenticaciï¿½n");
         return false;
     }
 
@@ -1116,13 +1118,13 @@ bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_d
 
 bool firebase_delete(firebase_handle_t *handle, const char *path) {
     if (!handle || !path) {
-        ESP_LOGE(TAG, "Parámetros inválidos para DELETE");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para DELETE");
         return false;
     }
 
-    // Verificar autenticación
+    // Verificar autenticaciï¿½n
     if (!firebase_maintain_auth(handle)) {
-        ESP_LOGE(TAG, "Error de autenticación");
+        ESP_LOGE(TAG, "Error de autenticaciï¿½n");
         return false;
     }
 
@@ -1204,10 +1206,10 @@ bool firebase_set_json(firebase_data_value_t *value, const char *json_string) {
     if (!value || !json_string)
         return false;
 
-    // Validar que sea un JSON válido
+    // Validar que sea un JSON vï¿½lido
     cJSON *json = cJSON_Parse(json_string);
     if (!json) {
-        ESP_LOGE(TAG, "JSON inválido");
+        ESP_LOGE(TAG, "JSON invï¿½lido");
         return false;
     }
     cJSON_Delete(json);
@@ -1225,7 +1227,7 @@ void firebase_free_value(firebase_data_value_t *value) {
     if (!value)
         return;
 
-    // Liberar memoria según el tipo de dato
+    // Liberar memoria segï¿½n el tipo de dato
     switch (value->type) {
     case FIREBASE_DATA_TYPE_STRING:
     case FIREBASE_DATA_TYPE_JSON:
@@ -1243,11 +1245,11 @@ void firebase_free_value(firebase_data_value_t *value) {
         break;
 
     default:
-        // Otros tipos no requieren liberación
+        // Otros tipos no requieren liberaciï¿½n
         break;
     }
 
-    // Reiniciar tipo y tamaño
+    // Reiniciar tipo y tamaï¿½o
     value->type      = FIREBASE_DATA_TYPE_NULL;
     value->data_size = 0;
 }
@@ -1289,15 +1291,15 @@ void firebase_configure_query(firebase_request_t *request, const char *order_by,
 
 int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_callback_t callback, void *user_data) {
     if (!handle || !path || !callback) {
-        ESP_LOGE(TAG, "Parámetros inválidos para LISTEN");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para LISTEN");
         return -1;
     }
 
     firebase_handle_private_t *private_handle = (firebase_handle_private_t *)handle;
 
-    // Verificar que la tarea listener esté en ejecución
+    // Verificar que la tarea listener estï¿½ en ejecuciï¿½n
     if (!private_handle->listener_running || !private_handle->listener_task) {
-        ESP_LOGE(TAG, "Tarea de escucha no está en ejecución");
+        ESP_LOGE(TAG, "Tarea de escucha no estï¿½ en ejecuciï¿½n");
         return -1;
     }
 
@@ -1314,7 +1316,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
     new_listener->user_data = user_data;
     new_listener->active    = true;
 
-    // Añadir a la lista de listeners
+    // Aï¿½adir a la lista de listeners
     xSemaphoreTake(private_handle->mutex, portMAX_DELAY);
 
     new_listener->next        = private_handle->listeners;
@@ -1329,7 +1331,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
 
 bool firebase_stop_listen(firebase_handle_t *handle, int listen_id) {
     if (!handle || listen_id < 0) {
-        ESP_LOGE(TAG, "Parámetros inválidos para STOP_LISTEN");
+        ESP_LOGE(TAG, "Parï¿½metros invï¿½lidos para STOP_LISTEN");
         return false;
     }
 

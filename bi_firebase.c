@@ -34,6 +34,7 @@ typedef struct firebase_listen_info {
     void *user_data;
     bool active;
     struct firebase_listen_info *next;
+    firebase_data_value_t ref_value;
 } firebase_listen_info_t;
 
 // Estructura para ampliar firebase_handle_t con datos privados
@@ -115,10 +116,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
         break;
     case HTTP_EVENT_ON_FINISH:
         handle->public_handle.http_status = esp_http_client_get_status_code(evt->client);
-        ESP_LOGI(TAG, "HTTP request completada con status: %d", handle->public_handle.http_status);
         break;
     case HTTP_EVENT_DISCONNECTED:
-        ESP_LOGI(TAG, "HTTP desconectado");
         if (handle->public_handle.state == FIREBASE_STATE_REQUEST_PENDING) {
             handle->public_handle.state = FIREBASE_STATE_AUTHENTICATED;
         }
@@ -502,8 +501,6 @@ static void firebase_listener_task(void *pvParameters) {
                 // Construir URL para escuchar cambios
                 char *url = build_firebase_url(&handle->public_handle, listener->path, NULL);
                 if (url) {
-                    ESP_LOGI(TAG, "Escuchando cambios en %s", url);
-
                     firebase_data_value_t value;
                     memset(&value, 0, sizeof(value));
 
@@ -513,9 +510,58 @@ static void firebase_listener_task(void *pvParameters) {
                         cJSON *json = cJSON_Parse(handle->public_handle.response_buffer);
                         if (json) {
                             if (json_to_value(json, &value)) {
-                                // Notificar cambio
-                                if (listener->callback) {
-                                    listener->callback(listener->user_data, listener->id);
+
+                                // Comparar con valor inicial
+                                if(listener->ref_value.type == value.type){
+                                    bool value_changed = false;
+                                    switch (listener->ref_value.type)
+                                    {
+                                    case FIREBASE_DATA_TYPE_STRING:
+                                        if(strcmp(listener->ref_value.data.string_val, value.data.string_val) != 0){
+                                            value_changed = true;
+                                            // Actualizar el valor de referencia
+                                            listener->ref_value.data.string_val = value.data.string_val;
+                                        }
+                                        break;
+                                    case FIREBASE_DATA_TYPE_INT:
+                                        if(listener->ref_value.data.int_val != value.data.int_val){
+                                            value_changed = true;
+                                            // Actualizar el valor de referencia
+                                            listener->ref_value.data.int_val = value.data.int_val;
+                                        }
+                                        break;
+                                    case FIREBASE_DATA_TYPE_FLOAT:
+                                        if(listener->ref_value.data.float_val != value.data.float_val){
+                                            value_changed = true;
+                                            // Actualizar el valor de referencia
+                                            listener->ref_value.data.float_val = value.data.float_val;
+                                        }
+                                        break;
+                                    case FIREBASE_DATA_TYPE_BOOL:
+                                        if(listener->ref_value.data.bool_val != value.data.bool_val){
+                                            value_changed = true;
+                                            // Actualizar el valor de referencia
+                                            listener->ref_value.data.bool_val = value.data.bool_val;
+                                        }
+                                        break;
+                                    case FIREBASE_DATA_TYPE_JSON:
+                                        if(strcmp(listener->ref_value.data.string_val, value.data.string_val) != 0){
+                                            value_changed = true;
+                                            // Actualizar el valor de referencia
+                                            listener->ref_value.data.string_val = value.data.string_val;
+                                        }
+                                        /* code */
+                                        break;
+                                    
+                                    default:
+                                        break;
+                                    }
+
+                                    // Notificar cambio
+                                    if (listener->callback && value_changed) {
+                                        listener->callback(listener->user_data, listener->id);
+                                    }
+
                                 }
                             }
                             cJSON_Delete(json);
@@ -802,7 +848,6 @@ bool firebase_refresh_token(firebase_handle_t *handle) {
     // Si a�n no ha expirado, no refrescar
     int64_t current_time = esp_timer_get_time() / 1000; // Convertir a ms
     if (handle->auth.token_expiry > current_time) {
-        ESP_LOGI(TAG, "Token a�n v�lido, no es necesario refrescarlo");
         return true;
     }
 
@@ -1315,6 +1360,14 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
     new_listener->callback  = callback;
     new_listener->user_data = user_data;
     new_listener->active    = true;
+
+    // Obtener el valor inicial
+    if(!firebase_get(handle, path, &new_listener->ref_value)) {
+        ESP_LOGE(TAG, "No se pudo obtener el valor inicial para el listener");
+        free(new_listener->path);
+        free(new_listener);
+        return -1;
+    }
 
     // A�adir a la lista de listeners
     xSemaphoreTake(private_handle->mutex, portMAX_DELAY);

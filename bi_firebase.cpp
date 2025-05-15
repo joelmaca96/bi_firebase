@@ -60,7 +60,7 @@ static char *url_encode(const char *str) {
 
     const char hex[] = "0123456789ABCDEF";
     size_t len       = strlen(str);
-    char *encoded    = malloc(len * 3 + 1); // En el peor caso, cada car�cter se codifica como %XX
+    char *encoded    = (char *)malloc((len * 3) + 1); // En el peor caso, cada car�cter se codifica como %XX
 
     if (!encoded)
         return NULL;
@@ -94,7 +94,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     case HTTP_EVENT_ON_DATA:
         // Realocar buffer si es necesario
         if (handle->public_handle.response_buffer == NULL) {
-            handle->public_handle.response_buffer = malloc(evt->data_len + 1);
+            handle->public_handle.response_buffer = (char *)malloc(evt->data_len + 1);
             if (!handle->public_handle.response_buffer) {
                 BI_DEBUG_ERROR(g_firebaseLogger, "No se pudo asignar memoria para la respuesta");
                 return ESP_FAIL;
@@ -104,7 +104,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
             handle->public_handle.response_buffer[evt->data_len] = 0;
         } else {
             size_t new_size  = handle->public_handle.response_buffer_size + evt->data_len;
-            char *new_buffer = realloc(handle->public_handle.response_buffer, new_size + 1);
+            char *new_buffer = (char *)realloc(handle->public_handle.response_buffer, new_size + 1);
             if (!new_buffer) {
                 BI_DEBUG_ERROR(g_firebaseLogger, "No se pudo reasignar memoria para la respuesta");
                 return ESP_FAIL;
@@ -301,7 +301,7 @@ static char *build_firebase_url(firebase_handle_t *handle, const char *path, con
     size_t path_len    = path ? strlen(path) : 0;
     size_t max_url_len = base_len + path_len + 256; // Espacio extra para par�metros
 
-    char *url = malloc(max_url_len);
+    char *url = (char *)malloc(max_url_len + 1);
     if (!url)
         return NULL;
 
@@ -316,6 +316,13 @@ static char *build_firebase_url(firebase_handle_t *handle, const char *path, con
     char *params_start = url + strlen(url);    
     int remaining_len  = max_url_len - strlen(url);
     bool has_params    = false;
+
+    if (handle->auth.id_token) {
+        snprintf(params_start, remaining_len, "%sauth=%s", has_params ? "&" : "?", handle->auth.id_token);
+        has_params    = true;
+        params_start  = url + strlen(url);
+        remaining_len = max_url_len - strlen(url);
+    }
 
     // A�adir par�metros de consulta si existen
     if (request) {
@@ -613,7 +620,7 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
         return NULL;
     }
 
-    firebase_handle_private_t *handle = calloc(1, sizeof(firebase_handle_private_t));
+    firebase_handle_private_t *handle = (firebase_handle_private_t *)calloc(1, sizeof(firebase_handle_private_t));
     if (!handle) {
         BI_DEBUG_ERROR(g_firebaseLogger, "No se pudo asignar memoria para handle");
         return NULL;
@@ -1361,7 +1368,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
     }
 
     // Crear nueva estructura de listener
-    firebase_listen_info_t *new_listener = calloc(1, sizeof(firebase_listen_info_t));
+    firebase_listen_info_t *new_listener = (firebase_listen_info_t *)calloc(1, sizeof(firebase_listen_info_t));
     if (!new_listener) {
         BI_DEBUG_ERROR(g_firebaseLogger, "No se pudo asignar memoria para listener");
         return -1;

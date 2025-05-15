@@ -75,6 +75,7 @@ typedef struct {
     char *id_token;
     char *refresh_token;
     int64_t token_expiry;
+    char *uid;
 } firebase_auth_t;
 
 /**
@@ -97,7 +98,6 @@ typedef struct {
  * @brief Estructura para configuración de Firebase
  */
 typedef struct {
-    char *host;
     char *database_url;
     firebase_auth_t auth;
     firebase_event_callback_t event_callback;

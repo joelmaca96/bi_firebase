@@ -1,6 +1,6 @@
 /**
  * @file bi_firebase.h
- * @brief Librería para conectar ESP32 a Firebase Realtime Database usando ESP-IDF
+ * @brief Librerï¿½a para conectar ESP32 a Firebase Realtime Database usando ESP-IDF
  */
 
 #ifndef BI_FIREBASE_H
@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Estados de la conexión Firebase
+ * @brief Estados de la conexiï¿½n Firebase
  */
 typedef enum {
     FIREBASE_STATE_IDLE,
@@ -41,7 +41,7 @@ typedef enum {
 } firebase_operation_t;
 
 /**
- * @brief Tipo de autenticación
+ * @brief Tipo de autenticaciï¿½n
  */
 typedef enum { FIREBASE_AUTH_API_KEY, FIREBASE_AUTH_JWT, FIREBASE_AUTH_CUSTOM_TOKEN } firebase_auth_type_t;
 
@@ -59,12 +59,7 @@ typedef enum {
 } firebase_data_type_t;
 
 /**
- * @brief Callback para notificar eventos
- */
-typedef void (*firebase_event_callback_t)(void *data, int event_id);
-
-/**
- * @brief Estructura para almacenar datos de autenticación
+ * @brief Estructura para almacenar datos de autenticaciï¿½n
  */
 typedef struct {
     firebase_auth_type_t auth_type;
@@ -95,12 +90,11 @@ typedef struct {
 } firebase_data_value_t;
 
 /**
- * @brief Estructura para configuración de Firebase
+ * @brief Estructura para configuraciï¿½n de Firebase
  */
 typedef struct {
     char *database_url;
     firebase_auth_t auth;
-    firebase_event_callback_t event_callback;
     void *user_data;
     esp_http_client_config_t http_config;
     int timeout_ms;
@@ -125,7 +119,7 @@ typedef struct {
 } firebase_request_t;
 
 /**
- * @brief Estructura principal para manejar la conexión Firebase
+ * @brief Estructura principal para manejar la conexiï¿½n Firebase
  */
 typedef struct {
     firebase_config_t config;
@@ -139,104 +133,110 @@ typedef struct {
 } firebase_handle_t;
 
 /**
- * @brief Inicializa la librería Firebase
+ * @brief Callback para notificar eventos
+ */
+typedef void (*firebase_event_callback_t)(void *data, int event_id, firebase_data_value_t *value);
+
+
+/**
+ * @brief Inicializa la librerï¿½a Firebase
  *
- * @param config Configuración para la conexión
- * @return firebase_handle_t* Manejador de la conexión o NULL si falla
+ * @param config Configuraciï¿½n para la conexiï¿½n
+ * @return firebase_handle_t* Manejador de la conexiï¿½n o NULL si falla
  */
 firebase_handle_t *firebase_init(firebase_config_t *config);
 
 /**
- * @brief Libera recursos utilizados por la librería
+ * @brief Libera recursos utilizados por la librerï¿½a
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  */
 void firebase_deinit(firebase_handle_t *handle);
 
 /**
- * @brief Autenticación con email y contraseña
+ * @brief Autenticaciï¿½n con email y contraseï¿½a
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param email Email de la cuenta
- * @param password Contraseña de la cuenta
- * @return bool true si la autenticación fue exitosa
+ * @param password Contraseï¿½a de la cuenta
+ * @return bool true si la autenticaciï¿½n fue exitosa
  */
 bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, const char *password);
 
 /**
- * @brief Autenticación con token personalizado
+ * @brief Autenticaciï¿½n con token personalizado
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param custom_token Token personalizado generado en Firebase
- * @return bool true si la autenticación fue exitosa
+ * @return bool true si la autenticaciï¿½n fue exitosa
  */
 bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *custom_token);
 
 /**
- * @brief Actualiza el token de autenticación
+ * @brief Actualiza el token de autenticaciï¿½n
  *
- * @param handle Manejador de la conexión
- * @return bool true si la actualización fue exitosa
+ * @param handle Manejador de la conexiï¿½n
+ * @return bool true si la actualizaciï¿½n fue exitosa
  */
 bool firebase_refresh_token(firebase_handle_t *handle);
 
 /**
- * @brief Verifica si está autenticado
+ * @brief Verifica si estï¿½ autenticado
  *
- * @param handle Manejador de la conexión
- * @return bool true si está autenticado y el token es válido
+ * @param handle Manejador de la conexiï¿½n
+ * @return bool true si estï¿½ autenticado y el token es vï¿½lido
  */
 bool firebase_is_authenticated(firebase_handle_t *handle);
 
 /**
- * @brief Obtiene datos de una ruta específica (GET)
+ * @brief Obtiene datos de una ruta especï¿½fica (GET)
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta en la base de datos
- * @param value Puntero donde se almacenará el valor
- * @return bool true si la operación fue exitosa
+ * @param value Puntero donde se almacenarï¿½ el valor
+ * @return bool true si la operaciï¿½n fue exitosa
  */
 bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_value_t *value);
 
 /**
- * @brief Establece datos en una ruta específica (PUT)
+ * @brief Establece datos en una ruta especï¿½fica (PUT)
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta en la base de datos
  * @param value Valor a establecer
- * @return bool true si la operación fue exitosa
+ * @return bool true si la operaciï¿½n fue exitosa
  */
 bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value);
 
 /**
- * @brief Actualiza uno o más campos en una ruta específica (PATCH)
+ * @brief Actualiza uno o mï¿½s campos en una ruta especï¿½fica (PATCH)
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta en la base de datos
  * @param value Valor a actualizar (debe ser JSON)
- * @return bool true si la operación fue exitosa
+ * @return bool true si la operaciï¿½n fue exitosa
  */
 bool firebase_update(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value);
 
 /**
- * @brief Añade datos a una lista generando una clave única (POST)
+ * @brief Aï¿½ade datos a una lista generando una clave ï¿½nica (POST)
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta en la base de datos
- * @param value Valor a añadir
- * @param generated_key Buffer donde se guardará la clave generada
- * @param key_size Tamaño del buffer para la clave
- * @return bool true si la operación fue exitosa
+ * @param value Valor a aï¿½adir
+ * @param generated_key Buffer donde se guardarï¿½ la clave generada
+ * @param key_size Tamaï¿½o del buffer para la clave
+ * @return bool true si la operaciï¿½n fue exitosa
  */
 bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value, char *generated_key,
                    size_t key_size);
 
 /**
- * @brief Elimina datos de una ruta específica (DELETE)
+ * @brief Elimina datos de una ruta especï¿½fica (DELETE)
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta en la base de datos
- * @return bool true si la operación fue exitosa
+ * @return bool true si la operaciï¿½n fue exitosa
  */
 bool firebase_delete(firebase_handle_t *handle, const char *path);
 
@@ -245,7 +245,7 @@ bool firebase_delete(firebase_handle_t *handle, const char *path);
  *
  * @param value Estructura donde guardar el valor
  * @param string_data String a guardar
- * @return bool true si se creó correctamente
+ * @return bool true si se creï¿½ correctamente
  */
 bool firebase_set_string(firebase_data_value_t *value, const char *string_data);
 
@@ -254,7 +254,7 @@ bool firebase_set_string(firebase_data_value_t *value, const char *string_data);
  *
  * @param value Estructura donde guardar el valor
  * @param int_data Entero a guardar
- * @return bool true si se creó correctamente
+ * @return bool true si se creï¿½ correctamente
  */
 bool firebase_set_int(firebase_data_value_t *value, int int_data);
 
@@ -263,7 +263,7 @@ bool firebase_set_int(firebase_data_value_t *value, int int_data);
  *
  * @param value Estructura donde guardar el valor
  * @param float_data Float a guardar
- * @return bool true si se creó correctamente
+ * @return bool true si se creï¿½ correctamente
  */
 bool firebase_set_float(firebase_data_value_t *value, float float_data);
 
@@ -272,7 +272,7 @@ bool firebase_set_float(firebase_data_value_t *value, float float_data);
  *
  * @param value Estructura donde guardar el valor
  * @param bool_data Booleano a guardar
- * @return bool true si se creó correctamente
+ * @return bool true si se creï¿½ correctamente
  */
 bool firebase_set_bool(firebase_data_value_t *value, bool bool_data);
 
@@ -281,7 +281,7 @@ bool firebase_set_bool(firebase_data_value_t *value, bool bool_data);
  *
  * @param value Estructura donde guardar el valor
  * @param json_string String JSON a guardar
- * @return bool true si se creó correctamente
+ * @return bool true si se creï¿½ correctamente
  */
 bool firebase_set_json(firebase_data_value_t *value, const char *json_string);
 
@@ -293,10 +293,10 @@ bool firebase_set_json(firebase_data_value_t *value, const char *json_string);
 void firebase_free_value(firebase_data_value_t *value);
 
 /**
- * @brief Verifica y mantiene la autenticación periódicamente
+ * @brief Verifica y mantiene la autenticaciï¿½n periï¿½dicamente
  *
- * @param handle Manejador de la conexión
- * @return bool true si la verificación fue exitosa
+ * @param handle Manejador de la conexiï¿½n
+ * @return bool true si la verificaciï¿½n fue exitosa
  */
 bool firebase_maintain_auth(firebase_handle_t *handle);
 
@@ -307,7 +307,7 @@ bool firebase_maintain_auth(firebase_handle_t *handle);
  * @param order_by Campo para ordenar
  * @param equal_to Valor para filtrar igualdad
  * @param limit_to_first Limitar a primeros N elementos
- * @param limit_to_last Limitar a últimos N elementos
+ * @param limit_to_last Limitar a ï¿½ltimos N elementos
  * @param start_at Valor para iniciar consulta
  * @param end_at Valor para finalizar consulta
  */
@@ -317,9 +317,9 @@ void firebase_configure_query(firebase_request_t *request, const char *order_by,
 /**
  * @brief Configura escucha para cambios en tiempo real
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param path Ruta a escuchar
- * @param callback Función de callback
+ * @param callback Funciï¿½n de callback
  * @param user_data Datos a pasar al callback
  * @return int ID de la escucha o -1 si falla
  */
@@ -328,7 +328,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
 /**
  * @brief Detiene una escucha
  *
- * @param handle Manejador de la conexión
+ * @param handle Manejador de la conexiï¿½n
  * @param listen_id ID de la escucha
  * @return bool true si se detuvo correctamente
  */

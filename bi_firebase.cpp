@@ -240,24 +240,17 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
     }
 
     // Si estamos autenticados y no es una solicitud de autenticaci�n, usar el token
-    if (handle->auth.id_token && strstr(url, "identitytoolkit") == NULL && strstr(url, "securetoken") == NULL) {
+    /*if (handle->auth.id_token && strstr(url, "identitytoolkit") == NULL && strstr(url, "securetoken") == NULL) {
         // Usar Authorization header para la autenticación
         char auth_header[1024]; // Buffer mucho más grande para el token completo
         snprintf(auth_header, sizeof(auth_header), "Bearer %s", handle->auth.id_token);
         BI_DEBUG_INFO(g_firebaseLogger, "Configurando header de autorización (longitud token: %d)", (int)strlen(handle->auth.id_token));
         
-        // Imprimir los primeros y últimos 10 caracteres del token para debug
-        char token_preview[25];
-        snprintf(token_preview, sizeof(token_preview), "%.*s...%s", 
-                10, handle->auth.id_token, 
-                strlen(handle->auth.id_token) > 10 ? handle->auth.id_token + strlen(handle->auth.id_token) - 10 : "");
-        BI_DEBUG_INFO(g_firebaseLogger, "Token: %s", token_preview);
-        
         esp_err_t err = esp_http_client_set_header(client, "Authorization", auth_header);
         if (err != ESP_OK) {
             BI_DEBUG_ERROR(g_firebaseLogger, "Error al configurar header de autorización: %s", esp_err_to_name(err));
         }
-    }
+    }*/
 
     // Establecer datos si es necesario
     if (data && data_len > 0) {
@@ -299,7 +292,7 @@ static char *build_firebase_url(firebase_handle_t *handle, const char *path, con
     // Calcular tama�o m�ximo de la URL
     size_t base_len    = strlen(handle->config.database_url);
     size_t path_len    = path ? strlen(path) : 0;
-    size_t max_url_len = base_len + path_len + 256; // Espacio extra para par�metros
+    size_t max_url_len = base_len + path_len + 1024; // Espacio extra para par�metros
 
     char *url = (char *)malloc(max_url_len + 1);
     if (!url)
@@ -564,21 +557,33 @@ static void firebase_listener_task(void *pvParameters) {
                                         }
                                         break;
                                     case FIREBASE_DATA_TYPE_JSON:
-                                        if(strcmp(listener->ref_value.data.string_val, value.data.string_val) != 0){
-                                            value_changed = true;
-                                            // Actualizar el valor de referencia
-                                            listener->ref_value.data.string_val = value.data.string_val;
+                                    {
+                                        cJSON *listener_json = cJSON_Parse(listener->ref_value.data.string_val);
+                                        cJSON *value_json = cJSON_Parse(value.data.string_val);
+
+                                        if(cJSON_Compare(listener_json, value_json, true) == false){
+                                             value_changed = true;
+                                            // Liberar memoria del string anterior
+                                            if (listener->ref_value.data.string_val) {
+                                                free(listener->ref_value.data.string_val);
+                                            }
+                                            listener->ref_value.data.string_val = strdup(value.data.string_val);
                                         }
-                                        /* code */
-                                        break;
+
+                                        if (listener_json) cJSON_Delete(listener_json);
+                                        if (value_json) cJSON_Delete(value_json);
                                     
+                                        break;
+                                    }
+                                    case FIREBASE_DATA_TYPE_ARRAY:
+                                        break;
                                     default:
                                         break;
                                     }
 
                                     // Notificar cambio
                                     if (listener->callback && value_changed) {
-                                        listener->callback(listener->user_data, listener->id);
+                                        listener->callback(listener->user_data, listener->id, &value);
                                     }
 
                                 }
@@ -601,7 +606,7 @@ static void firebase_listener_task(void *pvParameters) {
         xSemaphoreGive(handle->mutex);
 
         // Esperar antes de la siguiente verificaci�n
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 
     BI_DEBUG_INFO(g_firebaseLogger, "Tarea de escucha de Firebase finalizada");
@@ -628,7 +633,6 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
 
     // Copiar configuraci�n
     handle->public_handle.config.database_url   = strdup(config->database_url);
-    handle->public_handle.config.event_callback = config->event_callback;
     handle->public_handle.config.user_data      = config->user_data;
     handle->public_handle.config.http_config    = config->http_config;
     handle->public_handle.config.timeout_ms = config->timeout_ms > 0 ? config->timeout_ms : FIREBASE_HTTP_TIMEOUT_MS;
@@ -992,7 +996,7 @@ bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_val
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando GET en %s", url);
+    BI_DEBUG_INFO(g_firebaseLogger, "Realizando GET en %s", path);
 
     // Realizar solicitud HTTP
     bool success = make_http_request(handle, url, "GET", NULL, NULL, 0);
@@ -1058,7 +1062,7 @@ bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_da
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PUT en %s: %s", url, payload);
+    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PUT en %s: %s", path, payload);
 
     // Realizar solicitud HTTP
     bool success = make_http_request(handle, url, "PUT", "application/json", payload, strlen(payload));
@@ -1093,7 +1097,7 @@ bool firebase_update(firebase_handle_t *handle, const char *path, const firebase
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PATCH en %s: %s", url, value->data.string_val);
+    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PATCH en %s: %s", path, value->data.string_val);
 
     // Realizar solicitud HTTP
     bool success = make_http_request(handle, url, "PATCH", "application/json", value->data.string_val,
@@ -1146,7 +1150,7 @@ bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_d
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando POST en %s: %s", url, payload);
+    BI_DEBUG_INFO(g_firebaseLogger, "Realizando POST en %s: %s", path, payload);
 
     // Realizar solicitud HTTP
     bool success = make_http_request(handle, url, "POST", "application/json", payload, strlen(payload));
@@ -1199,7 +1203,7 @@ bool firebase_delete(firebase_handle_t *handle, const char *path) {
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando DELETE en %s", url);
+    BI_DEBUG_INFO(g_firebaseLogger, "Realizando DELETE en %s", path);
 
     // Realizar solicitud HTTP
     bool success = make_http_request(handle, url, "DELETE", NULL, NULL, 0);

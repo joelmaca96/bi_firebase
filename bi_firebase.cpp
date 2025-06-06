@@ -130,14 +130,58 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 }
 
 /**
- * Función para limpiar el buffer de respuesta
+ * Función para limpiar el buffer de respuesta - THREAD SAFE
+ * NOTA: Esta función debe llamarse solo cuando ya se tiene el http_mutex
  */
 static void clear_response_buffer(firebase_handle_t *handle) {
+    if (!handle) return;
+    
     if (handle->response_buffer) {
         free(handle->response_buffer);
         handle->response_buffer      = NULL;
         handle->response_buffer_size = 0;
     }
+    handle->http_status = 0;
+}
+
+/**
+ * Función auxiliar para obtener una copia segura del buffer de respuesta
+ * Útil cuando otras funciones necesitan acceder al buffer fuera del mutex
+ */static char* get_response_copy(firebase_handle_t *handle) {
+    if (!handle || !handle->response_buffer) {
+        return NULL;
+    }
+    
+    char *copy = NULL;
+    
+    // Tomar mutex para leer de forma segura
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (handle->response_buffer && handle->response_buffer_size > 0) {
+            copy = (char*)malloc(handle->response_buffer_size + 1);  // Cast explícito para C++
+            if (copy) {
+                memcpy(copy, handle->response_buffer, handle->response_buffer_size);
+                copy[handle->response_buffer_size] = '\0';
+            }
+        }
+        xSemaphoreGive(handle->http_mutex);
+    }
+    
+    return copy;
+}
+
+/**
+ * Función para obtener el estado HTTP de forma thread-safe
+ */
+static int get_http_status_safe(firebase_handle_t *handle) {
+    if (!handle) return 0;
+    
+    int status = 0;
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        status = handle->http_status;
+        xSemaphoreGive(handle->http_mutex);
+    }
+    
+    return status;
 }
 
 /**
@@ -210,8 +254,22 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
  */
 static bool make_http_request(firebase_handle_t *handle, const char *url, const char *method, const char *content_type,
                               const char *data, int data_len) {
-    // Reiniciar buffer de respuesta
+    if (!handle || !url) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for HTTP request");
+        return false;
+    }
+
+    // Adquirir mutex antes de cualquier operación HTTP
+    if (xSemaphoreTake(handle->http_mutex, pdMS_TO_TICKS(30000)) != pdTRUE) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "Failed to acquire HTTP mutex within 30 seconds");
+        return false;
+    }
+
+    bool success = false;
+    
+    // Reiniciar buffer de respuesta dentro del mutex
     clear_response_buffer(handle);
+    
     esp_http_client_config_t config = handle->config.http_config;
     config.url                      = url;
     config.method                   = !method ? HTTP_METHOD_GET
@@ -231,6 +289,7 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
         BI_DEBUG_ERROR(g_firebaseLogger, "Error al inicializar cliente HTTP");
+        xSemaphoreGive(handle->http_mutex);
         return false;
     }
 
@@ -246,11 +305,18 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
 
     handle->state = FIREBASE_STATE_REQUEST_PENDING;
 
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "HTTP %s request to: %s", method ? method : "GET", url);
+    if (data && data_len > 0) {
+        BI_DEBUG_VERBOSE(g_firebaseLogger, "Request payload (%d bytes): %.100s%s", 
+                        data_len, data, data_len > 100 ? "..." : "");
+    }
+
     esp_err_t err = esp_http_client_perform(client);
     if (err != ESP_OK) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error HTTP: %s", esp_err_to_name(err));
+        BI_DEBUG_ERROR(g_firebaseLogger, "HTTP error: %s", esp_err_to_name(err));
         esp_http_client_cleanup(client);
         handle->state = FIREBASE_STATE_ERROR;
+        xSemaphoreGive(handle->http_mutex);
         return false;
     }
 
@@ -262,14 +328,25 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
     esp_http_client_cleanup(client);
 
     if (status_code < 200 || status_code >= 300) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error HTTP %d: %s", status_code,
-                 handle->response_buffer ? handle->response_buffer : "Sin datos");
+        BI_DEBUG_ERROR(g_firebaseLogger, "HTTP %d error for %s: %s", status_code, url,
+                 handle->response_buffer ? handle->response_buffer : "No response data");
         handle->state = FIREBASE_STATE_ERROR;
-        return false;
+        success = false;
+    } else {
+        handle->state = FIREBASE_STATE_AUTHENTICATED;
+        success = true;
+        BI_DEBUG_VERBOSE(g_firebaseLogger, "HTTP request successful (status: %d)", status_code);
+        if (handle->response_buffer) {
+            BI_DEBUG_VERBOSE(g_firebaseLogger, "Response (%zu bytes): %.200s%s", 
+                           handle->response_buffer_size, 
+                           handle->response_buffer,
+                           handle->response_buffer_size > 200 ? "..." : "");
+        }
     }
 
-    handle->state = FIREBASE_STATE_AUTHENTICATED;
-    return true;
+    // Liberar mutex al final
+    xSemaphoreGive(handle->http_mutex);
+    return success;
 }
 
 /**
@@ -455,10 +532,14 @@ static bool json_to_value(cJSON *json, firebase_data_value_t *value) {
 /**
  * Tarea para escuchar eventos de Firebase - VERSIÓN CORREGIDA
  */
+
+ /**
+ * Tarea para escuchar eventos de Firebase - VERSIÓN CON MEJOR CONCURRENCIA
+ */
 static void firebase_listener_task(void *pvParameters) {
     firebase_handle_private_t *handle = (firebase_handle_private_t *)pvParameters;
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Tarea de escucha de Firebase iniciada");
+    BI_DEBUG_INFO(g_firebaseLogger, "Firebase listener task started");
 
     while (handle->listener_running) {
         // Verificar si hay listeners activos
@@ -483,101 +564,148 @@ static void firebase_listener_task(void *pvParameters) {
 
         // Verificar autenticación
         if (!firebase_is_authenticated(&handle->public_handle)) {
-            BI_DEBUG_WARNING(g_firebaseLogger, "No autenticado, intentando renovar token...");
+            BI_DEBUG_WARNING(g_firebaseLogger, "Not authenticated, trying to refresh token...");
             firebase_refresh_token(&handle->public_handle);
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        // Procesar cada listener activo
+        // Crear una copia de la lista de listeners para procesar
+        firebase_listen_info_t *listeners_to_process = NULL;
+        int listener_count = 0;
+
         xSemaphoreTake(handle->mutex, portMAX_DELAY);
         listener = handle->listeners;
         while (listener && handle->listener_running) {
             if (listener->active) {
-                // Liberar mutex durante la solicitud HTTP
-                xSemaphoreGive(handle->mutex);
-
-                // Construir URL para escuchar cambios
-                char *url = build_firebase_url(&handle->public_handle, listener->path, NULL);
-                if (url) {
-                    if (make_http_request(&handle->public_handle, url, "GET", NULL, NULL, 0) &&
-                        handle->public_handle.response_buffer) {
-
-                        cJSON *current_json = cJSON_Parse(handle->public_handle.response_buffer);
-                        if (current_json) {
-                            bool value_changed = false;
-                            
-                            // Comparar con valor de referencia
-                            if (listener->ref_value.data.string_val == NULL) {
-                                // Primera vez - solo para comandos no ejecutar
-                                if (strstr(listener->path, "/commands") != NULL) {
-                                    BI_DEBUG_INFO(g_firebaseLogger, "Primera lectura de comandos - inicializando referencia");
-                                    value_changed = false; // No ejecutar en primera lectura de comandos
-                                } else {
-                                    value_changed = true; // Para otros paths, ejecutar en primera lectura
-                                }
-                            } else {
-                                // Comparar JSONs
-                                cJSON *ref_json = cJSON_Parse(listener->ref_value.data.string_val);
-                                if (ref_json && listener->ref_value.data.string_val!= "NULL") {
-                                    if (!cJSON_Compare(ref_json, current_json, true)) {
-                                        value_changed = true;
-                                        BI_DEBUG_INFO(g_firebaseLogger, "Cambio detectado en %s ", listener->path);
-                                        BI_DEBUG_INFO(g_firebaseLogger, "Valor anterior: %s", listener->ref_value.data.string_val);
-                                        BI_DEBUG_INFO(g_firebaseLogger, "Valor actual: %s", cJSON_PrintUnformatted(current_json));
-                                    }
-                                    cJSON_Delete(ref_json);
-                                } else {
-                                    // Si no se puede parsear referencia, asumir cambio
-                                    value_changed = true;
-                                    BI_DEBUG_WARNING(g_firebaseLogger, "No se pudo parsear valor de referencia en %s", listener->path);
-                                }
-                            }
-                            
-                            // Solo notificar si hay cambios
-                            if (value_changed && listener->callback) {
-                                firebase_data_value_t value;
-                                memset(&value, 0, sizeof(value));
-                                
-                                if (json_to_value(current_json, &value)) {
-                                    BI_DEBUG_INFO(g_firebaseLogger, "Ejecutando callback para %s", listener->path);
-                                    listener->callback(listener->user_data, listener->id, &value);
-                                    firebase_free_value(&value);
-                                }
-                            }
-                            
-                            // SIEMPRE actualizar valor de referencia
-                            firebase_free_value(&listener->ref_value);
-                            char *json_string = cJSON_PrintUnformatted(current_json);
-                            if (json_string) {
-                                firebase_set_string(&listener->ref_value, json_string);
-                                free(json_string);
-                            }
-                            
-                            cJSON_Delete(current_json);
-                        }
+                // Crear copia del listener para procesamiento
+                firebase_listen_info_t *listener_copy = (firebase_listen_info_t*)malloc(sizeof(firebase_listen_info_t));
+                if (listener_copy) {
+                    listener_copy->id = listener->id;
+                    listener_copy->path = strdup(listener->path);
+                    listener_copy->callback = listener->callback;
+                    listener_copy->user_data = listener->user_data;
+                    listener_copy->active = listener->active;
+                    
+                    // Copiar valor de referencia
+                    memset(&listener_copy->ref_value, 0, sizeof(firebase_data_value_t));
+                    if (listener->ref_value.data.string_val) {
+                        firebase_set_string(&listener_copy->ref_value, listener->ref_value.data.string_val);
                     }
-
-                    free(url);
+                    
+                    listener_copy->next = listeners_to_process;
+                    listeners_to_process = listener_copy;
+                    listener_count++;
                 }
-
-                // Volver a tomar mutex
-                xSemaphoreTake(handle->mutex, portMAX_DELAY);
             }
-
             listener = listener->next;
         }
         xSemaphoreGive(handle->mutex);
+
+        BI_DEBUG_VERBOSE(g_firebaseLogger, "Processing %d listeners", listener_count);
+
+        // Procesar cada listener (fuera del mutex principal)
+        firebase_listen_info_t *current_listener = listeners_to_process;
+        while (current_listener && handle->listener_running) {
+            // Construir URL para escuchar cambios
+            char *url = build_firebase_url(&handle->public_handle, current_listener->path, NULL);
+            if (url) {
+                // Hacer la solicitud HTTP (ya protegida con su propio mutex)
+                if (make_http_request(&handle->public_handle, url, "GET", NULL, NULL, 0) &&
+                    handle->public_handle.response_buffer) {
+
+                    cJSON *current_json = cJSON_Parse(handle->public_handle.response_buffer);
+                    if (current_json) {
+                        bool value_changed = false;
+                        
+                        // Comparar con valor de referencia
+                        if (current_listener->ref_value.data.string_val == NULL) {
+                            // Primera vez - solo para comandos no ejecutar
+                            if (strstr(current_listener->path, "/commands") != NULL) {
+                                BI_DEBUG_VERBOSE(g_firebaseLogger, "First read of commands - initializing reference");
+                                value_changed = false; // No ejecutar en primera lectura de comandos
+                            } else {
+                                value_changed = true; // Para otros paths, ejecutar en primera lectura
+                            }
+                        } else {
+                            // Comparar JSONs
+                            cJSON *ref_json = cJSON_Parse(current_listener->ref_value.data.string_val);
+                            if (ref_json) {
+                                // Usar cJSON_Compare para detectar diferencias
+                                if (!cJSON_Compare(ref_json, current_json, true)) {
+                                    value_changed = true;
+                                    BI_DEBUG_VERBOSE(g_firebaseLogger, "Change detected in %s", current_listener->path);
+                                }
+                                cJSON_Delete(ref_json);
+                            } else {
+                                // Si no se puede parsear referencia, asumir cambio
+                                value_changed = true;
+                                BI_DEBUG_WARNING(g_firebaseLogger, "Could not parse reference value for %s", current_listener->path);
+                            }
+                        }
+                        
+                        // Solo notificar si hay cambios
+                        if (value_changed && current_listener->callback) {
+                            firebase_data_value_t value;
+                            memset(&value, 0, sizeof(value));
+                            
+                            if (json_to_value(current_json, &value)) {
+                                BI_DEBUG_VERBOSE(g_firebaseLogger, "Executing callback for %s", current_listener->path);
+                                current_listener->callback(current_listener->user_data, current_listener->id, &value);
+                                firebase_free_value(&value);
+                            }
+                        }
+                        
+                        // Actualizar valor de referencia en el listener original
+                        xSemaphoreTake(handle->mutex, portMAX_DELAY);
+                        firebase_listen_info_t *original_listener = handle->listeners;
+                        while (original_listener) {
+                            if (original_listener->id == current_listener->id && original_listener->active) {
+                                firebase_free_value(&original_listener->ref_value);
+                                char *json_string = cJSON_PrintUnformatted(current_json);
+                                if (json_string) {
+                                    firebase_set_string(&original_listener->ref_value, json_string);
+                                    free(json_string);
+                                }
+                                break;
+                            }
+                            original_listener = original_listener->next;
+                        }
+                        xSemaphoreGive(handle->mutex);
+                        
+                        cJSON_Delete(current_json);
+                    } else {
+                        BI_DEBUG_WARNING(g_firebaseLogger, "Failed to parse JSON response for %s", current_listener->path);
+                    }
+                } else {
+                    BI_DEBUG_WARNING(g_firebaseLogger, "HTTP request failed for %s", current_listener->path);
+                }
+
+                free(url);
+            }
+
+            current_listener = current_listener->next;
+        }
+
+        // Limpiar lista temporal de listeners
+        while (listeners_to_process) {
+            firebase_listen_info_t *next = listeners_to_process->next;
+            if (listeners_to_process->path) {
+                free(listeners_to_process->path);
+            }
+            firebase_free_value(&listeners_to_process->ref_value);
+            free(listeners_to_process);
+            listeners_to_process = next;
+        }
 
         // Esperar antes de la siguiente verificación
         vTaskDelay(pdMS_TO_TICKS(5000)); // 5 segundos
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Tarea de escucha de Firebase finalizada");
+    BI_DEBUG_INFO(g_firebaseLogger, "Firebase listener task finished");
     handle->listener_task = NULL;
     vTaskDelete(NULL);
 }
-
 // Implementación de funciones públicas
 
 firebase_handle_t *firebase_init(firebase_config_t *config) {
@@ -592,6 +720,14 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
     firebase_handle_private_t *handle = (firebase_handle_private_t *)calloc(1, sizeof(firebase_handle_private_t));
     if (!handle) {
         BI_DEBUG_ERROR(g_firebaseLogger, "No se pudo asignar memoria para handle");
+        return NULL;
+    }
+
+    // Crear mutex HTTP ANTES que cualquier otra cosa
+    handle->public_handle.http_mutex = xSemaphoreCreateMutex();
+    if (!handle->public_handle.http_mutex) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error al crear HTTP mutex");
+        free(handle);
         return NULL;
     }
 
@@ -617,7 +753,8 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
     handle->mutex               = xSemaphoreCreateMutex();
 
     if (!handle->mutex) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al crear mutex");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error al crear listener mutex");
+        vSemaphoreDelete(handle->public_handle.http_mutex);
         firebase_deinit(&handle->public_handle);
         return NULL;
     }
@@ -641,7 +778,7 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
 
     xTaskCreate(firebase_listener_task, "firebase_listener", 4096, handle, 5, &handle->listener_task);
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Firebase inicializado correctamente");
+    BI_DEBUG_INFO(g_firebaseLogger, "Firebase inicializado correctamente con protección HTTP");
     return &handle->public_handle;
 }
 
@@ -695,13 +832,18 @@ void firebase_deinit(firebase_handle_t *handle) {
         firebase_listen_info_t *next = listener->next;
         if (listener->path)
             free(listener->path);
+        firebase_free_value(&listener->ref_value);
         free(listener);
         listener = next;
     }
 
-    // Liberar mutex
+    // Liberar mutexes
     if (private_handle->mutex) {
         vSemaphoreDelete(private_handle->mutex);
+    }
+    
+    if (handle->http_mutex) {
+        vSemaphoreDelete(handle->http_mutex);
     }
 
     // Liberar handle
@@ -943,38 +1085,47 @@ bool firebase_maintain_auth(firebase_handle_t *handle) {
 
 bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para GET");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for GET");
         return false;
     }
 
     // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Authentication error");
         return false;
     }
 
     // Construir URL
     char *url = build_firebase_url(handle, path, NULL);
     if (!url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al construir URL");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error building URL");
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando GET en %s", path);
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "Performing GET on %s", path);
 
-    // Realizar solicitud HTTP
+    // Realizar solicitud HTTP (ya protegida con mutex)
     bool success = make_http_request(handle, url, "GET", NULL, NULL, 0);
     free(url);
 
-    if (!success || !handle->response_buffer) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud GET");
+    if (!success) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "GET request failed");
+        return false;
+    }
+
+    // Obtener copia segura del buffer de respuesta
+    char *response_copy = get_response_copy(handle);
+    if (!response_copy) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "No response data");
         return false;
     }
 
     // Parsear respuesta JSON
-    cJSON *json = cJSON_Parse(handle->response_buffer);
+    cJSON *json = cJSON_Parse(response_copy);
+    free(response_copy);
+    
     if (!json) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al parsear respuesta JSON: %s", handle->response_buffer);
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error parsing JSON response");
         return false;
     }
 
@@ -983,7 +1134,7 @@ bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_val
     cJSON_Delete(json);
 
     if (!parse_success) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al convertir JSON a valor Firebase");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error converting JSON to Firebase value");
         return false;
     }
 
@@ -992,27 +1143,27 @@ bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_val
 
 bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para SET");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for SET");
         return false;
     }
 
     // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Authentication error");
         return false;
     }
 
     // Construir URL
     char *url = build_firebase_url(handle, path, NULL);
     if (!url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al construir URL");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error building URL");
         return false;
     }
 
     // Convertir valor a JSON
     cJSON *json = value_to_json(value);
     if (!json) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al convertir valor a JSON");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error converting value to JSON");
         free(url);
         return false;
     }
@@ -1021,21 +1172,21 @@ bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_da
     cJSON_Delete(json);
 
     if (!payload) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al serializar JSON");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error serializing JSON");
         free(url);
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PUT en %s: %s", path, payload);
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "Performing PUT on %s", path);
 
-    // Realizar solicitud HTTP
+    // Realizar solicitud HTTP (ya protegida con mutex)
     bool success = make_http_request(handle, url, "PUT", "application/json", payload, strlen(payload));
 
     free(url);
     free(payload);
 
     if (!success) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud PUT");
+        BI_DEBUG_ERROR(g_firebaseLogger, "PUT request failed");
         return false;
     }
 
@@ -1044,63 +1195,63 @@ bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_da
 
 bool firebase_update(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value || value->type != FIREBASE_DATA_TYPE_JSON) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para UPDATE (debe ser JSON)");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for UPDATE (must be JSON)");
         return false;
     }
 
     // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Authentication error");
         return false;
     }
 
     // Construir URL
     char *url = build_firebase_url(handle, path, NULL);
     if (!url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al construir URL");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error building URL");
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando PATCH en %s: %s", path, value->data.string_val);
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "Performing PATCH on %s", path);
 
-    // Realizar solicitud HTTP
-    bool success = make_http_request(handle, url, "PATCH", "application/json", value->data.string_val,
-                                     strlen(value->data.string_val));
+    // Realizar solicitud HTTP (ya protegida con mutex)
+    bool success = make_http_request(handle, url, "PATCH", "application/json", 
+                                   value->data.string_val, strlen(value->data.string_val));
 
     free(url);
 
     if (!success) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud PATCH");
+        BI_DEBUG_ERROR(g_firebaseLogger, "PATCH request failed");
         return false;
     }
 
     return true;
 }
 
-bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value, char *generated_key,
-                   size_t key_size) {
+bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value, 
+                   char *generated_key, size_t key_size) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para PUSH");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for PUSH");
         return false;
     }
 
     // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Authentication error");
         return false;
     }
 
     // Construir URL
     char *url = build_firebase_url(handle, path, NULL);
     if (!url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al construir URL");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error building URL");
         return false;
     }
 
     // Convertir valor a JSON
     cJSON *json = value_to_json(value);
     if (!json) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al convertir valor a JSON");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error converting value to JSON");
         free(url);
         return false;
     }
@@ -1109,37 +1260,43 @@ bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_d
     cJSON_Delete(json);
 
     if (!payload) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al serializar JSON");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error serializing JSON");
         free(url);
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando POST en %s: %s", path, payload);
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "Performing POST on %s", path);
 
-    // Realizar solicitud HTTP
+    // Realizar solicitud HTTP (ya protegida con mutex)
     bool success = make_http_request(handle, url, "POST", "application/json", payload, strlen(payload));
 
     free(url);
     free(payload);
 
-    if (!success || !handle->response_buffer) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud POST");
+    if (!success) {
+        BI_DEBUG_ERROR(g_firebaseLogger, "POST request failed");
         return false;
     }
 
-    // Extraer clave generada
+    // Extraer clave generada de forma segura
     if (generated_key && key_size > 0) {
-        cJSON *json_response = cJSON_Parse(handle->response_buffer);
-        if (json_response) {
-            cJSON *name = cJSON_GetObjectItem(json_response, "name");
-            if (name && cJSON_IsString(name)) {
-                strncpy(generated_key, name->valuestring, key_size - 1);
-                generated_key[key_size - 1] = '\0';
-                BI_DEBUG_INFO(g_firebaseLogger, "Clave generada: %s", generated_key);
+        char *response_copy = get_response_copy(handle);
+        if (response_copy) {
+            cJSON *json_response = cJSON_Parse(response_copy);
+            if (json_response) {
+                cJSON *name = cJSON_GetObjectItem(json_response, "name");
+                if (name && cJSON_IsString(name)) {
+                    strncpy(generated_key, name->valuestring, key_size - 1);
+                    generated_key[key_size - 1] = '\0';
+                    BI_DEBUG_VERBOSE(g_firebaseLogger, "Generated key: %s", generated_key);
+                } else {
+                    generated_key[0] = '\0';
+                }
+                cJSON_Delete(json_response);
             } else {
                 generated_key[0] = '\0';
             }
-            cJSON_Delete(json_response);
+            free(response_copy);
         } else {
             generated_key[0] = '\0';
         }
@@ -1150,32 +1307,32 @@ bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_d
 
 bool firebase_delete(firebase_handle_t *handle, const char *path) {
     if (!handle || !path) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para DELETE");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Invalid parameters for DELETE");
         return false;
     }
 
     // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Authentication error");
         return false;
     }
 
     // Construir URL
     char *url = build_firebase_url(handle, path, NULL);
     if (!url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al construir URL");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error building URL");
         return false;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Realizando DELETE en %s", path);
+    BI_DEBUG_VERBOSE(g_firebaseLogger, "Performing DELETE on %s", path);
 
-    // Realizar solicitud HTTP
+    // Realizar solicitud HTTP (ya protegida con mutex)
     bool success = make_http_request(handle, url, "DELETE", NULL, NULL, 0);
 
     free(url);
 
     if (!success) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud DELETE");
+        BI_DEBUG_ERROR(g_firebaseLogger, "DELETE request failed");
         return false;
     }
 
@@ -1415,3 +1572,4 @@ bool firebase_stop_listen(firebase_handle_t *handle, int listen_id) {
 
     return found;
 }
+

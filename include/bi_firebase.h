@@ -9,6 +9,8 @@
 #include <cJSON.h>
 #include <esp_http_client.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 // #include <esp_tls.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -130,6 +132,7 @@ typedef struct {
     int http_status;
     esp_timer_handle_t token_refresh_timer;
     firebase_auth_t auth;
+    SemaphoreHandle_t http_mutex;  // Mutex para proteger operaciones HTTP
 } firebase_handle_t;
 
 /**

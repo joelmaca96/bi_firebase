@@ -1,6 +1,6 @@
 /**
  * @file bi_firebase.c
- * @brief Implementaci�n de la librer�a para Firebase Realtime Database en ESP32
+ * @brief Implementación de la librería para Firebase Realtime Database en ESP32
  */
 
 #include "bi_firebase.h"
@@ -8,7 +8,6 @@
 #include <esp_http_client.h>
 #include <esp_log.h>
 #include <esp_timer.h>
-// #include <esp_tls.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -17,6 +16,7 @@
 #include <mbedtls/sha256.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cmath>
 #include "bi_debug.h"
 #include "../../main/custom_config.h"
 
@@ -49,7 +49,7 @@ typedef struct {
     bool listener_running;
 } firebase_handle_private_t;
 
-// Funciones est�ticas de ayuda
+// Funciones estáticas de ayuda
 
 /**
  * Codifica un string a formato URL
@@ -60,7 +60,7 @@ static char *url_encode(const char *str) {
 
     const char hex[] = "0123456789ABCDEF";
     size_t len       = strlen(str);
-    char *encoded    = (char *)malloc((len * 3) + 1); // En el peor caso, cada car�cter se codifica como %XX
+    char *encoded    = (char *)malloc((len * 3) + 1); // En el peor caso, cada carácter se codifica como %XX
 
     if (!encoded)
         return NULL;
@@ -85,7 +85,7 @@ static char *url_encode(const char *str) {
 }
 
 /**
- * Funci�n para manejar eventos HTTP
+ * Función para manejar eventos HTTP
  */
 static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     firebase_handle_private_t *handle = (firebase_handle_private_t *)evt->user_data;
@@ -130,7 +130,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
 }
 
 /**
- * Funci�n para limpiar el buffer de respuesta
+ * Función para limpiar el buffer de respuesta
  */
 static void clear_response_buffer(firebase_handle_t *handle) {
     if (handle->response_buffer) {
@@ -141,7 +141,7 @@ static void clear_response_buffer(firebase_handle_t *handle) {
 }
 
 /**
- * Funci�n de callback para el temporizador de renovaci�n de token
+ * Función de callback para el temporizador de renovación de token
  */
 static void token_refresh_timer_callback(void *arg) {
     firebase_handle_t *handle = (firebase_handle_t *)arg;
@@ -182,11 +182,11 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
         handle->auth.refresh_token = strdup(refresh_token->valuestring);
         handle->auth.uid           = strdup(local_id->valuestring);
 
-        // Calcular tiempo de expiraci�n (actual + expires_in - margen de seguridad de 5 minutos)
+        // Calcular tiempo de expiración (actual + expires_in - margen de seguridad de 5 minutos)
         int64_t current_time      = esp_timer_get_time() / 1000; // Convertir a ms
         handle->auth.token_expiry = current_time + (expires_in_int * 1000) - (5 * 60 * 1000);
 
-        BI_DEBUG_INFO(g_firebaseLogger, "Tokens de autenticaci�n obtenidos con �xito, expiran en %d segundos", expires_in_int);
+        BI_DEBUG_INFO(g_firebaseLogger, "Tokens de autenticación obtenidos con éxito, expiran en %d segundos", expires_in_int);
         success = true;
     } else {
         // Intentar obtener mensaje de error
@@ -194,10 +194,10 @@ static bool parse_auth_response(firebase_handle_t *handle, const char *response)
         if (error) {
             cJSON *message = cJSON_GetObjectItem(error, "message");
             if (message && cJSON_IsString(message)) {
-                BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n: %s", message->valuestring);
+                BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación: %s", message->valuestring);
             }
         } else {
-            BI_DEBUG_ERROR(g_firebaseLogger, "Formato de respuesta de autenticaci�n inv�lido");
+            BI_DEBUG_ERROR(g_firebaseLogger, "Formato de respuesta de autenticación inválido");
         }
     }
 
@@ -239,19 +239,6 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
         esp_http_client_set_header(client, "Content-Type", content_type);
     }
 
-    // Si estamos autenticados y no es una solicitud de autenticaci�n, usar el token
-    /*if (handle->auth.id_token && strstr(url, "identitytoolkit") == NULL && strstr(url, "securetoken") == NULL) {
-        // Usar Authorization header para la autenticación
-        char auth_header[1024]; // Buffer mucho más grande para el token completo
-        snprintf(auth_header, sizeof(auth_header), "Bearer %s", handle->auth.id_token);
-        BI_DEBUG_INFO(g_firebaseLogger, "Configurando header de autorización (longitud token: %d)", (int)strlen(handle->auth.id_token));
-        
-        esp_err_t err = esp_http_client_set_header(client, "Authorization", auth_header);
-        if (err != ESP_OK) {
-            BI_DEBUG_ERROR(g_firebaseLogger, "Error al configurar header de autorización: %s", esp_err_to_name(err));
-        }
-    }*/
-
     // Establecer datos si es necesario
     if (data && data_len > 0) {
         esp_http_client_set_post_field(client, data, data_len);
@@ -267,7 +254,7 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
         return false;
     }
 
-    // Verificar c�digo de estado HTTP
+    // Verificar código de estado HTTP
     int status_code     = esp_http_client_get_status_code(client);
     handle->http_status = status_code;
 
@@ -289,10 +276,10 @@ static bool make_http_request(firebase_handle_t *handle, const char *url, const 
  * Construye una URL para Firebase
  */
 static char *build_firebase_url(firebase_handle_t *handle, const char *path, const firebase_request_t *request) {
-    // Calcular tama�o m�ximo de la URL
+    // Calcular tamaño máximo de la URL
     size_t base_len    = strlen(handle->config.database_url);
     size_t path_len    = path ? strlen(path) : 0;
-    size_t max_url_len = base_len + path_len + 1024; // Espacio extra para par�metros
+    size_t max_url_len = base_len + path_len + 1024; // Espacio extra para parámetros
 
     char *url = (char *)malloc(max_url_len + 1);
     if (!url)
@@ -317,7 +304,7 @@ static char *build_firebase_url(firebase_handle_t *handle, const char *path, con
         remaining_len = max_url_len - strlen(url);
     }
 
-    // A�adir par�metros de consulta si existen
+    // Añadir parámetros de consulta si existen
     if (request) {
 
         // Shallow
@@ -466,7 +453,7 @@ static bool json_to_value(cJSON *json, firebase_data_value_t *value) {
 }
 
 /**
- * Tarea para escuchar eventos de Firebase
+ * Tarea para escuchar eventos de Firebase - VERSIÓN CORREGIDA
  */
 static void firebase_listener_task(void *pvParameters) {
     firebase_handle_private_t *handle = (firebase_handle_private_t *)pvParameters;
@@ -494,7 +481,7 @@ static void firebase_listener_task(void *pvParameters) {
             continue;
         }
 
-        // Verificar autenticaci�n
+        // Verificar autenticación
         if (!firebase_is_authenticated(&handle->public_handle)) {
             BI_DEBUG_WARNING(g_firebaseLogger, "No autenticado, intentando renovar token...");
             firebase_refresh_token(&handle->public_handle);
@@ -513,85 +500,61 @@ static void firebase_listener_task(void *pvParameters) {
                 // Construir URL para escuchar cambios
                 char *url = build_firebase_url(&handle->public_handle, listener->path, NULL);
                 if (url) {
-                    firebase_data_value_t value;
-                    memset(&value, 0, sizeof(value));
-
                     if (make_http_request(&handle->public_handle, url, "GET", NULL, NULL, 0) &&
                         handle->public_handle.response_buffer) {
 
-                        cJSON *json = cJSON_Parse(handle->public_handle.response_buffer);
-                        if (json) {
-                            if (json_to_value(json, &value)) {
-
-                                // Comparar con valor inicial
-                                if(listener->ref_value.type == value.type){
-                                    bool value_changed = false;
-                                    switch (listener->ref_value.type)
-                                    {
-                                    case FIREBASE_DATA_TYPE_STRING:
-                                        if(strcmp(listener->ref_value.data.string_val, value.data.string_val) != 0){
-                                            value_changed = true;
-                                            // Actualizar el valor de referencia
-                                            listener->ref_value.data.string_val = value.data.string_val;
-                                        }
-                                        break;
-                                    case FIREBASE_DATA_TYPE_INT:
-                                        if(listener->ref_value.data.int_val != value.data.int_val){
-                                            value_changed = true;
-                                            // Actualizar el valor de referencia
-                                            listener->ref_value.data.int_val = value.data.int_val;
-                                        }
-                                        break;
-                                    case FIREBASE_DATA_TYPE_FLOAT:
-                                        if(listener->ref_value.data.float_val != value.data.float_val){
-                                            value_changed = true;
-                                            // Actualizar el valor de referencia
-                                            listener->ref_value.data.float_val = value.data.float_val;
-                                        }
-                                        break;
-                                    case FIREBASE_DATA_TYPE_BOOL:
-                                        if(listener->ref_value.data.bool_val != value.data.bool_val){
-                                            value_changed = true;
-                                            // Actualizar el valor de referencia
-                                            listener->ref_value.data.bool_val = value.data.bool_val;
-                                        }
-                                        break;
-                                    case FIREBASE_DATA_TYPE_JSON:
-                                    {
-                                        cJSON *listener_json = cJSON_Parse(listener->ref_value.data.string_val);
-                                        cJSON *value_json = cJSON_Parse(value.data.string_val);
-
-                                        if(cJSON_Compare(listener_json, value_json, true) == false){
-                                             value_changed = true;
-                                            // Liberar memoria del string anterior
-                                            if (listener->ref_value.data.string_val) {
-                                                free(listener->ref_value.data.string_val);
-                                            }
-                                            listener->ref_value.data.string_val = strdup(value.data.string_val);
-                                        }
-
-                                        if (listener_json) cJSON_Delete(listener_json);
-                                        if (value_json) cJSON_Delete(value_json);
-                                    
-                                        break;
+                        cJSON *current_json = cJSON_Parse(handle->public_handle.response_buffer);
+                        if (current_json) {
+                            bool value_changed = false;
+                            
+                            // Comparar con valor de referencia usando cJSON_Compare
+                            if (listener->ref_value.data.string_val == NULL) {
+                                // Primera vez - solo para comandos no ejecutar
+                                if (strstr(listener->path, "/commands") != NULL) {
+                                    BI_DEBUG_INFO(g_firebaseLogger, "Primera lectura de comandos - inicializando referencia");
+                                    value_changed = false; // No ejecutar en primera lectura de comandos
+                                } else {
+                                    value_changed = true; // Para otros paths, ejecutar en primera lectura
+                                }
+                            } else {
+                                // Comparar JSONs
+                                cJSON *ref_json = cJSON_Parse(listener->ref_value.data.string_val);
+                                if (ref_json) {
+                                    // Usar cJSON_Compare para detectar diferencias
+                                    if (!cJSON_Compare(ref_json, current_json, true)) {
+                                        value_changed = true;
+                                        BI_DEBUG_INFO(g_firebaseLogger, "Cambio detectado en %s usando cJSON_Compare", listener->path);
                                     }
-                                    case FIREBASE_DATA_TYPE_ARRAY:
-                                        break;
-                                    default:
-                                        break;
-                                    }
-
-                                    // Notificar cambio
-                                    if (listener->callback && value_changed) {
-                                        listener->callback(listener->user_data, listener->id, &value);
-                                    }
-
+                                    cJSON_Delete(ref_json);
+                                } else {
+                                    // Si no se puede parsear referencia, asumir cambio
+                                    value_changed = true;
+                                    BI_DEBUG_WARNING(g_firebaseLogger, "No se pudo parsear valor de referencia en %s", listener->path);
                                 }
                             }
-                            cJSON_Delete(json);
+                            
+                            // Solo notificar si hay cambios
+                            if (value_changed && listener->callback) {
+                                firebase_data_value_t value;
+                                memset(&value, 0, sizeof(value));
+                                
+                                if (json_to_value(current_json, &value)) {
+                                    BI_DEBUG_INFO(g_firebaseLogger, "Ejecutando callback para %s", listener->path);
+                                    listener->callback(listener->user_data, listener->id, &value);
+                                    firebase_free_value(&value);
+                                }
+                            }
+                            
+                            // SIEMPRE actualizar valor de referencia
+                            firebase_free_value(&listener->ref_value);
+                            char *json_string = cJSON_PrintUnformatted(current_json);
+                            if (json_string) {
+                                firebase_set_string(&listener->ref_value, json_string);
+                                free(json_string);
+                            }
+                            
+                            cJSON_Delete(current_json);
                         }
-
-                        firebase_free_value(&value);
                     }
 
                     free(url);
@@ -605,8 +568,8 @@ static void firebase_listener_task(void *pvParameters) {
         }
         xSemaphoreGive(handle->mutex);
 
-        // Esperar antes de la siguiente verificaci�n
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        // Esperar antes de la siguiente verificación
+        vTaskDelay(pdMS_TO_TICKS(5000)); // 5 segundos
     }
 
     BI_DEBUG_INFO(g_firebaseLogger, "Tarea de escucha de Firebase finalizada");
@@ -614,14 +577,14 @@ static void firebase_listener_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-// Implementaci�n de funciones p�blicas
+// Implementación de funciones públicas
 
 firebase_handle_t *firebase_init(firebase_config_t *config) {
 
     g_firebaseLogger = createLogger("BI_FIREBASE", INFO, DEBUG_FIREBASE);
 
     if (!config || !config->database_url) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Configuraci�n inv�lida");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Configuración inválida");
         return NULL;
     }
 
@@ -631,14 +594,14 @@ firebase_handle_t *firebase_init(firebase_config_t *config) {
         return NULL;
     }
 
-    // Copiar configuraci�n
+    // Copiar configuración
     handle->public_handle.config.database_url   = strdup(config->database_url);
     handle->public_handle.config.user_data      = config->user_data;
     handle->public_handle.config.http_config    = config->http_config;
     handle->public_handle.config.timeout_ms = config->timeout_ms > 0 ? config->timeout_ms : FIREBASE_HTTP_TIMEOUT_MS;
     handle->public_handle.config.secure_connection = config->secure_connection;
 
-    // Copiar informaci�n de autenticaci�n
+    // Copiar información de autenticación
     handle->public_handle.auth.auth_type     = config->auth.auth_type;
     handle->public_handle.auth.api_key       = config->auth.api_key ? strdup(config->auth.api_key) : NULL;
     handle->public_handle.auth.user_email    = config->auth.user_email ? strdup(config->auth.user_email) : NULL;
@@ -704,7 +667,7 @@ void firebase_deinit(firebase_handle_t *handle) {
         esp_timer_delete(handle->token_refresh_timer);
     }
 
-    // Liberar recursos de autenticaci�n
+    // Liberar recursos de autenticación
     if (handle->auth.api_key)
         free(handle->auth.api_key);
     if (handle->auth.user_email)
@@ -718,7 +681,7 @@ void firebase_deinit(firebase_handle_t *handle) {
     if (handle->auth.refresh_token)
         free(handle->auth.refresh_token);
 
-    // Liberar configuraci�n
+    // Liberar configuración
     if (handle->config.database_url)
         free(handle->config.database_url);
 
@@ -748,13 +711,13 @@ void firebase_deinit(firebase_handle_t *handle) {
 
 bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, const char *password) {
     if (!handle || !email || !password || !handle->config.database_url || !handle->auth.api_key) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para autenticación");
         return false;
     }
 
     handle->state = FIREBASE_STATE_AUTHENTICATING;
 
-    // Construir URL de autenticaci�n
+    // Construir URL de autenticación
     char url[256];
     snprintf(url, sizeof(url), "%s:signInWithPassword?key=%s", FIREBASE_AUTH_URL, handle->auth.api_key);
 
@@ -779,14 +742,14 @@ bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, c
     free(payload);
 
     if (!success || !handle->response_buffer) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud de autenticación");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
 
     // Parsear respuesta
     if (!parse_auth_response(handle, handle->response_buffer)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al parsear respuesta de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error al parsear respuesta de autenticación");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
@@ -802,20 +765,20 @@ bool firebase_auth_with_password(firebase_handle_t *handle, const char *email, c
     handle->auth.auth_type     = FIREBASE_AUTH_API_KEY;
 
     handle->state = FIREBASE_STATE_AUTHENTICATED;
-    BI_DEBUG_INFO(g_firebaseLogger, "Autenticaci�n exitosa con email/password");
+    BI_DEBUG_INFO(g_firebaseLogger, "Autenticación exitosa con email/password");
 
     return true;
 }
 
 bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *custom_token) {
     if (!handle || !custom_token || !handle->config.database_url || !handle->auth.api_key) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para autenticación");
         return false;
     }
 
     handle->state = FIREBASE_STATE_AUTHENTICATING;
 
-    // Construir URL de autenticaci�n
+    // Construir URL de autenticación
     char url[256];
     snprintf(url, sizeof(url), "%s:signInWithCustomToken?key=%s", FIREBASE_AUTH_URL, handle->auth.api_key);
 
@@ -838,14 +801,14 @@ bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *cust
     free(payload);
 
     if (!success || !handle->response_buffer) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error en solicitud de autenticación");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
 
     // Parsear respuesta
     if (!parse_auth_response(handle, handle->response_buffer)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error al parsear respuesta de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error al parsear respuesta de autenticación");
         handle->state = FIREBASE_STATE_ERROR;
         return false;
     }
@@ -857,7 +820,7 @@ bool firebase_auth_with_custom_token(firebase_handle_t *handle, const char *cust
     handle->auth.auth_type    = FIREBASE_AUTH_CUSTOM_TOKEN;
 
     handle->state = FIREBASE_STATE_AUTHENTICATED;
-    BI_DEBUG_INFO(g_firebaseLogger, "Autenticaci�n exitosa con token personalizado");
+    BI_DEBUG_INFO(g_firebaseLogger, "Autenticación exitosa con token personalizado");
 
     return true;
 }
@@ -868,13 +831,13 @@ bool firebase_refresh_token(firebase_handle_t *handle) {
         return false;
     }
 
-    // Si a�n no ha expirado, no refrescar
+    // Si aún no ha expirado, no refrescar
     int64_t current_time = esp_timer_get_time() / 1000; // Convertir a ms
     if (handle->auth.token_expiry > current_time) {
         return true;
     }
 
-    BI_DEBUG_INFO(g_firebaseLogger, "Refrescando token de autenticaci�n");
+    BI_DEBUG_INFO(g_firebaseLogger, "Refrescando token de autenticación");
 
     // Construir URL de refresco
     char url[256];
@@ -929,20 +892,20 @@ bool firebase_refresh_token(firebase_handle_t *handle) {
         handle->auth.id_token      = strdup(id_token->valuestring);
         handle->auth.refresh_token = strdup(refresh_token->valuestring);
 
-        // Calcular tiempo de expiraci�n (actual + expires_in - margen de seguridad de 5 minutos)
+        // Calcular tiempo de expiración (actual + expires_in - margen de seguridad de 5 minutos)
         int64_t current_time      = esp_timer_get_time() / 1000; // Convertir a ms
         handle->auth.token_expiry = current_time + (expires_in->valueint * 1000) - (5 * 60 * 1000);
 
-        BI_DEBUG_INFO(g_firebaseLogger, "Token refrescado con �xito, expira en %d segundos", expires_in->valueint);
+        BI_DEBUG_INFO(g_firebaseLogger, "Token refrescado con éxito, expira en %d segundos", expires_in->valueint);
         refresh_success = true;
     } else {
         // Intentar reautenticarse si el refresco falla
         if (handle->auth.auth_type == FIREBASE_AUTH_API_KEY && handle->auth.user_email && handle->auth.user_password) {
 
-            BI_DEBUG_WARNING(g_firebaseLogger, "Refresco de token fall�, intentando reautenticarse");
+            BI_DEBUG_WARNING(g_firebaseLogger, "Refresco de token falló, intentando reautenticarse");
             refresh_success = firebase_auth_with_password(handle, handle->auth.user_email, handle->auth.user_password);
         } else if (handle->auth.auth_type == FIREBASE_AUTH_CUSTOM_TOKEN && handle->auth.custom_token) {
-            BI_DEBUG_WARNING(g_firebaseLogger, "Refresco de token fall�, intentando reautenticarse");
+            BI_DEBUG_WARNING(g_firebaseLogger, "Refresco de token falló, intentando reautenticarse");
             refresh_success = firebase_auth_with_custom_token(handle, handle->auth.custom_token);
         }
     }
@@ -979,13 +942,13 @@ bool firebase_maintain_auth(firebase_handle_t *handle) {
 
 bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para GET");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para GET");
         return false;
     }
 
-    // Verificar autenticaci�n
+    // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
         return false;
     }
 
@@ -1028,13 +991,13 @@ bool firebase_get(firebase_handle_t *handle, const char *path, firebase_data_val
 
 bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para SET");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para SET");
         return false;
     }
 
-    // Verificar autenticaci�n
+    // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
         return false;
     }
 
@@ -1080,13 +1043,13 @@ bool firebase_set(firebase_handle_t *handle, const char *path, const firebase_da
 
 bool firebase_update(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value) {
     if (!handle || !path || !value || value->type != FIREBASE_DATA_TYPE_JSON) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para UPDATE (debe ser JSON)");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para UPDATE (debe ser JSON)");
         return false;
     }
 
-    // Verificar autenticaci�n
+    // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
         return false;
     }
 
@@ -1116,13 +1079,13 @@ bool firebase_update(firebase_handle_t *handle, const char *path, const firebase
 bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_data_value_t *value, char *generated_key,
                    size_t key_size) {
     if (!handle || !path || !value) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para PUSH");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para PUSH");
         return false;
     }
 
-    // Verificar autenticaci�n
+    // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
         return false;
     }
 
@@ -1186,13 +1149,13 @@ bool firebase_push(firebase_handle_t *handle, const char *path, const firebase_d
 
 bool firebase_delete(firebase_handle_t *handle, const char *path) {
     if (!handle || !path) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para DELETE");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para DELETE");
         return false;
     }
 
-    // Verificar autenticaci�n
+    // Verificar autenticación
     if (!firebase_maintain_auth(handle)) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticaci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Error de autenticación");
         return false;
     }
 
@@ -1274,10 +1237,10 @@ bool firebase_set_json(firebase_data_value_t *value, const char *json_string) {
     if (!value || !json_string)
         return false;
 
-    // Validar que sea un JSON v�lido
+    // Validar que sea un JSON válido
     cJSON *json = cJSON_Parse(json_string);
     if (!json) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "JSON inv�lido");
+        BI_DEBUG_ERROR(g_firebaseLogger, "JSON inválido");
         return false;
     }
     cJSON_Delete(json);
@@ -1295,7 +1258,7 @@ void firebase_free_value(firebase_data_value_t *value) {
     if (!value)
         return;
 
-    // Liberar memoria seg�n el tipo de dato
+    // Liberar memoria según el tipo de dato
     switch (value->type) {
     case FIREBASE_DATA_TYPE_STRING:
     case FIREBASE_DATA_TYPE_JSON:
@@ -1313,11 +1276,11 @@ void firebase_free_value(firebase_data_value_t *value) {
         break;
 
     default:
-        // Otros tipos no requieren liberaci�n
+        // Otros tipos no requieren liberación
         break;
     }
 
-    // Reiniciar tipo y tama�o
+    // Reiniciar tipo y tamaño
     value->type      = FIREBASE_DATA_TYPE_NULL;
     value->data_size = 0;
 }
@@ -1359,15 +1322,15 @@ void firebase_configure_query(firebase_request_t *request, const char *order_by,
 
 int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_callback_t callback, void *user_data) {
     if (!handle || !path || !callback) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para LISTEN");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para LISTEN");
         return -1;
     }
 
     firebase_handle_private_t *private_handle = (firebase_handle_private_t *)handle;
 
-    // Verificar que la tarea listener est� en ejecuci�n
+    // Verificar que la tarea listener esté en ejecución
     if (!private_handle->listener_running || !private_handle->listener_task) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Tarea de escucha no est� en ejecuci�n");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Tarea de escucha no está en ejecución");
         return -1;
     }
 
@@ -1392,7 +1355,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
         return -1;
     }
 
-    // A�adir a la lista de listeners
+    // Añadir a la lista de listeners
     xSemaphoreTake(private_handle->mutex, portMAX_DELAY);
 
     new_listener->next        = private_handle->listeners;
@@ -1407,7 +1370,7 @@ int firebase_listen(firebase_handle_t *handle, const char *path, firebase_event_
 
 bool firebase_stop_listen(firebase_handle_t *handle, int listen_id) {
     if (!handle || listen_id < 0) {
-        BI_DEBUG_ERROR(g_firebaseLogger, "Par�metros inv�lidos para STOP_LISTEN");
+        BI_DEBUG_ERROR(g_firebaseLogger, "Parámetros inválidos para STOP_LISTEN");
         return false;
     }
 
@@ -1451,4 +1414,3 @@ bool firebase_stop_listen(firebase_handle_t *handle, int listen_id) {
 
     return found;
 }
-

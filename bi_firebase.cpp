@@ -507,7 +507,7 @@ static void firebase_listener_task(void *pvParameters) {
                         if (current_json) {
                             bool value_changed = false;
                             
-                            // Comparar con valor de referencia usando cJSON_Compare
+                            // Comparar con valor de referencia
                             if (listener->ref_value.data.string_val == NULL) {
                                 // Primera vez - solo para comandos no ejecutar
                                 if (strstr(listener->path, "/commands") != NULL) {
@@ -519,11 +519,12 @@ static void firebase_listener_task(void *pvParameters) {
                             } else {
                                 // Comparar JSONs
                                 cJSON *ref_json = cJSON_Parse(listener->ref_value.data.string_val);
-                                if (ref_json) {
-                                    // Usar cJSON_Compare para detectar diferencias
+                                if (ref_json && listener->ref_value.data.string_val!= "NULL") {
                                     if (!cJSON_Compare(ref_json, current_json, true)) {
                                         value_changed = true;
-                                        BI_DEBUG_INFO(g_firebaseLogger, "Cambio detectado en %s usando cJSON_Compare", listener->path);
+                                        BI_DEBUG_INFO(g_firebaseLogger, "Cambio detectado en %s ", listener->path);
+                                        BI_DEBUG_INFO(g_firebaseLogger, "Valor anterior: %s", listener->ref_value.data.string_val);
+                                        BI_DEBUG_INFO(g_firebaseLogger, "Valor actual: %s", cJSON_PrintUnformatted(current_json));
                                     }
                                     cJSON_Delete(ref_json);
                                 } else {
